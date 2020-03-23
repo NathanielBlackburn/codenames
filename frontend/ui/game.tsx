@@ -70,12 +70,39 @@ export class Game extends React.Component {
   }
 
   public toggleRole(e, role) {
+    e.target.blur();
     e.preventDefault();
-    this.setState({ codemaster: role == 'codemaster' });
+    (role == 'codemaster') ? this.enableSpymaster() : this.enablePlayer();
+  }
+
+  enableSpymaster() {
+    const password = prompt('Please provide the spymaster\'s password.');
+    if (password) {
+      $.post(
+        '/spymaster',
+        JSON.stringify({
+          game_id: this.state.game.id,
+          password: password
+        }),
+        g => {
+          console.log(g);
+          if (g.spymasterActive) {
+            this.setState({ codemaster: true });
+          }
+        }
+      );
+    }
+  }
+
+  enablePlayer() {
+    this.setState({ codemaster: false });
   }
 
   public guess(e, idx, word) {
     e.preventDefault();
+    if (this.state.codemaster) {
+      return;
+    }
     if (this.state.game.revealed[idx]) {
       return; // ignore if already revealed
     }
@@ -115,7 +142,9 @@ export class Game extends React.Component {
     return count;
   }
 
-  public endTurn() {
+  public endTurn(e) {
+    console.log(e);
+    e.target.blur();
     $.post(
       '/end-turn',
       JSON.stringify({
@@ -129,6 +158,7 @@ export class Game extends React.Component {
   }
 
   public nextGame(e) {
+    e.target.blur();
     e.preventDefault();
     // Ask for confirmation when current game hasn't finished
     let allowNextGame = (

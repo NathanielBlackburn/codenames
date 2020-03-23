@@ -24,10 +24,11 @@ type Server struct {
 
 	gameIDWords []string
 
-	mu           sync.Mutex
-	games        map[string]*Game
-	defaultWords []string
-	mux          *http.ServeMux
+	mu                 sync.Mutex
+	games              map[string]*Game
+	spymasterPasswords map[string]string
+	defaultWords       []string
+	mux                *http.ServeMux
 }
 
 func (s *Server) getGame(gameID, stateID string) (*Game, bool) {
@@ -41,6 +42,7 @@ func (s *Server) getGame(gameID, stateID string) (*Game, bool) {
 	}
 	g = newGame(gameID, state)
 	s.games[gameID] = g
+	delete(s.spymasterPasswords, gameID)
 	return g, true
 }
 
@@ -65,6 +67,7 @@ func (s *Server) handleRetrieveGame(rw http.ResponseWriter, req *http.Request) {
 
 	g = newGame(gameID, randomState(s.defaultWords))
 	s.games[gameID] = g
+	delete(s.spymasterPasswords, gameID)
 	writeGame(rw, g)
 }
 
@@ -89,7 +92,34 @@ func (s *Server) handleGameState(rw http.ResponseWriter, req *http.Request) {
 	}
 	g = newGame(body.GameID, randomState(s.defaultWords))
 	s.games[body.GameID] = g
+	delete(s.spymasterPasswords, body.GameID)
 	writeGame(rw, g)
+}
+
+// POST /spymaster
+func (s *Server) handleSpymaster(rw http.ResponseWriter, req *http.Request) {
+	var request struct {
+		GameID            string `json:"game_id"`
+		SpymasterPassword string `json:"password"`
+	}
+
+	decoder := json.NewDecoder(req.Body)
+	if err := decoder.Decode(&request); err != nil {
+		http.Error(rw, "Error decoding", 400)
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var spymasterActive = false
+	if password, found := s.spymasterPasswords[request.GameID]; found {
+		spymasterActive = (password == request.SpymasterPassword)
+	} else {
+		s.spymasterPasswords[request.GameID] = request.SpymasterPassword
+		spymasterActive = true
+	}
+	writeSpymaster(rw, spymasterActive)
 }
 
 // POST /guess
@@ -184,6 +214,7 @@ func (s *Server) handleNextGame(rw http.ResponseWriter, req *http.Request) {
 
 	g := newGame(request.GameID, randomState(words))
 	s.games[request.GameID] = g
+	delete(s.spymasterPasswords, request.GameID)
 	writeGame(rw, g)
 }
 
@@ -243,6 +274,7 @@ func (s *Server) Start() error {
 	s.mux.HandleFunc("/guess", s.handleGuess)
 	s.mux.HandleFunc("/game/", s.handleRetrieveGame)
 	s.mux.HandleFunc("/game-state", s.handleGameState)
+	s.mux.HandleFunc("/spymaster", s.handleSpymaster)
 	s.mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("frontend/dist"))))
 	s.mux.HandleFunc("/", s.handleIndex)
 
@@ -250,6 +282,7 @@ func (s *Server) Start() error {
 	s.gameIDWords = gameIDs.Words()
 
 	s.games = make(map[string]*Game)
+	s.spymasterPasswords = make(map[string]string)
 	s.defaultWords = d.Words()
 	sort.Strings(s.defaultWords)
 	s.Server.Handler = withPProfHandler(s.mux)
@@ -295,6 +328,12 @@ func basicAuth(handler http.Handler, password, realm string) http.Handler {
 		}
 		handler.ServeHTTP(w, r)
 	})
+}
+
+func writeSpymaster(rw http.ResponseWriter, spymasterActive bool) {
+	writeJSON(rw, struct {
+		SpymasterActive bool `json:"spymasterActive"`
+	}{spymasterActive})
 }
 
 func writeGame(rw http.ResponseWriter, g *Game) {
