@@ -10,8 +10,8 @@ RUN curl -sL https://deb.nodesource.com/setup_12.x | bash - && \
 COPY . /app
 WORKDIR /app
 
-# Get the go app
-RUN go get -u github.com/jbowens/codenames
+# Get dependencies
+RUN go get
 
 # Build backend and frontend 
 RUN go build cmd/codenames/main.go && \
